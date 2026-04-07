@@ -89,11 +89,14 @@ export default function LandingPage() {
               Pricing
             </a>
           </nav>
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" asChild>
-              <Link href="/auth/login">Log in</Link>
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" asChild className="text-sm">
+              <Link href="/auth/login">Student Login</Link>
             </Button>
-            <Button asChild>
+            <Button variant="ghost" asChild className="text-sm">
+              <Link href="/auth/faculty/login">Faculty Login</Link>
+            </Button>
+            <Button asChild className="text-sm">
               <Link href="/auth/signup">
                 Get Started
                 <ArrowRight className="h-4 w-4 ml-2" />
@@ -129,6 +132,11 @@ export default function LandingPage() {
                   <Link href="/auth/signup">
                     Start Learning Free
                     <ArrowRight className="h-5 w-5 ml-2" />
+                  </Link>
+                </Button>
+                <Button size="lg" variant="outline" className="h-14 px-8 text-base" asChild>
+                  <Link href="/auth/faculty/signup">
+                    Faculty Sign Up
                   </Link>
                 </Button>
                 <Button size="lg" variant="outline" className="h-14 px-8 text-base">

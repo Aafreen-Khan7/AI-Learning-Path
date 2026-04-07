@@ -45,6 +45,24 @@ type TopicItem = {
   resources: Array<{ type: string; title: string; url: string; source?: string }>
 }
 
+type RawTopicDoc = {
+  id: string
+  title?: string
+  description?: string
+  contentMarkdown?: string
+  estimatedMinutes?: number
+  orderIndex?: number
+  resources?: Array<{ type: string; title: string; url: string; source?: string }>
+}
+
+type AIRecommendation = {
+  type: "video" | "study-material" | "website"
+  title: string
+  url: string
+  source: string
+  reason: string
+}
+
 export default function SubjectDetailPage() {
   const { user } = useAuth()
   const params = useParams<{ id: string }>()
@@ -58,6 +76,8 @@ export default function SubjectDetailPage() {
   const [topics, setTopics] = useState<TopicItem[]>([])
   const [averageScore, setAverageScore] = useState(0)
   const [weakTopics, setWeakTopics] = useState<string[]>([])
+  const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([])
+  const [isGeneratingRecommendations, setIsGeneratingRecommendations] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -91,8 +111,8 @@ export default function SubjectDetailPage() {
         const pathDescription = String(pathData.description || "Personalized topic map")
 
         const topicsSnap = await getDocs(collection(db, "learningPaths", pathId, "topics"))
-        const rawTopics = topicsSnap.docs
-          .map((topicDoc) => ({ id: topicDoc.id, ...topicDoc.data() }))
+        const rawTopics: RawTopicDoc[] = topicsSnap.docs
+          .map((topicDoc) => ({ id: topicDoc.id, ...(topicDoc.data() as Omit<RawTopicDoc, "id">) }))
           .sort((a, b) => Number(a.orderIndex || 0) - Number(b.orderIndex || 0))
 
         const progressRef = doc(db, "subjectProgress", `${user.uid}_${subjectId}`)
@@ -193,6 +213,42 @@ export default function SubjectDetailPage() {
     }
     return list.slice(0, 8)
   }, [topics])
+
+  const handleGenerateRecommendations = async () => {
+    setIsGeneratingRecommendations(true)
+    try {
+      const response = await fetch("/api/recommendations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subjectName,
+          progress,
+          averageScore,
+          weakTopics,
+          topics: topics.map((topic) => ({
+            id: topic.id,
+            title: topic.title,
+            score: topic.quizScore,
+            status: topic.status,
+          })),
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to generate recommendations")
+      }
+
+      const payload = (await response.json()) as { recommendations?: AIRecommendation[] }
+      const recs = Array.isArray(payload.recommendations) ? payload.recommendations : []
+      setAiRecommendations(recs)
+      toast.success("Personalized recommendations generated")
+    } catch (error) {
+      console.error("Failed to generate personalized recommendations", error)
+      toast.error("Could not generate recommendations right now")
+    } finally {
+      setIsGeneratingRecommendations(false)
+    }
+  }
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground">Loading subject details...</div>
@@ -360,6 +416,52 @@ export default function SubjectDetailPage() {
         </TabsContent>
 
         <TabsContent value="resources" className="mt-6">
+          <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-foreground">AI + ML Personalized Recommendations</h3>
+              <p className="text-sm text-muted-foreground">
+                Based on your quiz analytics, weak areas, and module progress.
+              </p>
+            </div>
+            <Button onClick={handleGenerateRecommendations} disabled={isGeneratingRecommendations}>
+              {isGeneratingRecommendations ? "Generating..." : "Generate Recommendations"}
+            </Button>
+          </div>
+
+          {aiRecommendations.length > 0 && (
+            <div className="grid gap-4 sm:grid-cols-2 mb-6">
+              {aiRecommendations.map((resource, index) => (
+                <Card key={`${resource.url}-${index}`} className="bg-card border-border hover:border-primary/50 transition-colors">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-4">
+                      <div
+                        className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
+                          resource.type === "video" ? "bg-chart-5/10" : "bg-chart-2/10"
+                        }`}
+                      >
+                        {resource.type === "video" ? (
+                          <Video className="h-5 w-5 text-chart-5" />
+                        ) : (
+                          <LinkIcon className="h-5 w-5 text-chart-2" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-foreground mb-1">{resource.title}</h3>
+                        <p className="text-xs text-muted-foreground mb-2">{resource.source}</p>
+                        <p className="text-sm text-muted-foreground">{resource.reason}</p>
+                      </div>
+                      <Button size="sm" variant="ghost" asChild>
+                        <a href={resource.url} target="_blank" rel="noopener noreferrer">
+                          Open
+                        </a>
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
           <div className="grid gap-4 sm:grid-cols-2">
             {resourceCards.length > 0 ? (
               resourceCards.map((resource) => (

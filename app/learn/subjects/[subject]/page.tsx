@@ -1,13 +1,12 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import { ArrowLeft, BookOpen, CheckCircle2, Lock, PlayCircle, Target } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { db } from "@/lib/firebase"
-import { buildSubjectModules, SubjectModuleOutline } from "@/lib/learning-data"
-import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore"
+import { collection, doc, getDoc, getDocs, query, where, addDoc, deleteDoc, setDoc } from "firebase/firestore"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -27,6 +26,29 @@ type SubjectPathState = {
   topicRefs: TopicRef[]
 }
 
+type GeneratedModule = {
+  title: string
+  theory: string
+  keyPoints: string[]
+  estimatedMinutes: number
+  quizQuestions: Array<{ question: string; options: string[]; correctIndex: number; explanation?: string }>
+}
+
+type PathGenerationResponse = {
+  profile: "foundation" | "balanced" | "accelerated"
+  modules: GeneratedModule[]
+}
+
+type StoredTopicDoc = {
+  id: string
+  title?: string
+  description?: string
+  contentMarkdown?: string
+  estimatedMinutes?: number
+  orderIndex?: number
+  resources?: Array<{ title?: string }>
+}
+
 export default function SubjectModulesPage() {
   const { user } = useAuth()
   const params = useParams<{ subject: string }>()
@@ -36,6 +58,13 @@ export default function SubjectModulesPage() {
   const [subjectName, setSubjectName] = useState(decodedSubject || "Subject")
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([])
   const [pathState, setPathState] = useState<SubjectPathState | null>(null)
+  const [moduleCards, setModuleCards] = useState<Array<{
+    id: string
+    title: string
+    theory: string
+    keyPoints: string[]
+    estimatedMinutes: number
+  }>>([])
 
   useEffect(() => {
     let mounted = true
@@ -57,6 +86,22 @@ export default function SubjectModulesPage() {
           (subject: string) => subject.toLowerCase() === decodedSubject.toLowerCase()
         )
         const resolvedSubjectName = matchingSignupSubject || decodedSubject || "Subject"
+        const branch = userSnap.exists() ? String(userSnap.data().branch || "") : ""
+        const qualification = userSnap.exists() ? String(userSnap.data().qualification || "") : ""
+        const year = userSnap.exists() ? String(userSnap.data().year || "") : ""
+        const semester = userSnap.exists() ? String(userSnap.data().semester || "") : ""
+
+        const attemptsSnap = await getDocs(query(collection(db, "topicAttempts"), where("uid", "==", user.uid)))
+        const topicScores = attemptsSnap.docs
+          .map((attemptDoc) => Number(attemptDoc.data().percentage || 0))
+          .filter((score) => Number.isFinite(score))
+
+        const subjectProgressId = `${user.uid}_${resolvedSubjectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+        const subjectProgressSnap = await getDoc(doc(db, "subjectProgress", subjectProgressId))
+        const weakTopics = subjectProgressSnap.exists() && Array.isArray(subjectProgressSnap.data().weakTopics)
+          ? subjectProgressSnap.data().weakTopics.map((topic: unknown) => String(topic))
+          : []
+        const averageScore = topicScores.length ? Math.round(topicScores.reduce((sum, score) => sum + score, 0) / topicScores.length) : 0
 
         const pathsSnap = await getDocs(query(collection(db, "learningPaths"), where("uid", "==", user.uid)))
         const matchingPathDoc = pathsSnap.docs.find((pathDoc) => {
@@ -67,15 +112,114 @@ export default function SubjectModulesPage() {
 
         let nextPathState: SubjectPathState | null = null
 
-        if (matchingPathDoc) {
+        const requiresRegeneration = !matchingPathDoc || Number(matchingPathDoc.data().personalizationVersion || 0) < 1
+
+        if (requiresRegeneration) {
+          const generationResponse = await fetch("/api/path-generation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subjectName: resolvedSubjectName,
+              averageScore,
+              progress: subjectProgressSnap.exists() ? Number(subjectProgressSnap.data().progressPercent || 0) : 0,
+              weakTopics,
+              topicScores,
+              branch,
+              qualification,
+              year,
+              semester,
+            }),
+          })
+
+          if (!generationResponse.ok) {
+            throw new Error("Failed to generate personalized path")
+          }
+
+          const generated = (await generationResponse.json()) as PathGenerationResponse
+          const modules = generated.modules
+          const now = new Date().toISOString()
+          const pathRef = matchingPathDoc
+            ? doc(db, "learningPaths", matchingPathDoc.id)
+            : await addDoc(collection(db, "learningPaths"), {
+                uid: user.uid,
+                subjectId: resolvedSubjectName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+                subjectName: resolvedSubjectName,
+                description: "Personalized topic map",
+                duration: `${Math.max(1, Math.round(modules.reduce((sum, module) => sum + module.estimatedMinutes, 0) / 60))} hours`,
+                completedTopics: 0,
+                totalTopics: modules.length,
+                overallProgress: 0,
+                createdAt: now,
+                updatedAt: now,
+              })
+
+          if (matchingPathDoc) {
+            const existingTopics = await getDocs(collection(db, "learningPaths", matchingPathDoc.id, "topics"))
+            await Promise.all(existingTopics.docs.map((topicDoc) => deleteDoc(topicDoc.ref)))
+          }
+
+          await setDoc(
+            pathRef,
+            {
+              uid: user.uid,
+              subjectId: resolvedSubjectName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+              subjectName: resolvedSubjectName,
+              description: "Personalized topic map",
+              duration: `${Math.max(1, Math.round(modules.reduce((sum, module) => sum + module.estimatedMinutes, 0) / 60))} hours`,
+              completedTopics: 0,
+              totalTopics: modules.length,
+              overallProgress: 0,
+              personalizationVersion: 1,
+              graspingProfile: generated.profile,
+              generatedBy: "ai-ml",
+              updatedAt: now,
+            },
+            { merge: true }
+          )
+
+          await Promise.all(
+            modules.map((module, index) =>
+              setDoc(doc(db, "learningPaths", pathRef.id, "topics", `module-${index + 1}`), {
+                title: module.title,
+                description: module.theory,
+                contentMarkdown: `${module.theory}\n\nKey points:\n${module.keyPoints.map((point) => `- ${point}`).join("\n")}`,
+                estimatedMinutes: module.estimatedMinutes,
+                orderIndex: index + 1,
+                resources: [],
+                completed: false,
+                quizQuestions: module.quizQuestions,
+              })
+            )
+          )
+
+          nextPathState = {
+            pathId: pathRef.id,
+            overallProgress: 0,
+            completedTopics: 0,
+            totalTopics: modules.length,
+            topicRefs: modules.map((_, index) => ({ id: `module-${index + 1}`, orderIndex: index + 1 })),
+          }
+
+          setModuleCards(
+            modules.map((module, index) => ({
+              id: `module-${index + 1}`,
+              title: module.title,
+              theory: module.theory,
+              keyPoints: module.keyPoints,
+              estimatedMinutes: module.estimatedMinutes,
+            }))
+          )
+        } else if (matchingPathDoc) {
           const pathData = matchingPathDoc.data()
           const topicsSnap = await getDocs(collection(db, "learningPaths", matchingPathDoc.id, "topics"))
-          const topicRefs = topicsSnap.docs
-            .map((topicDoc) => ({
-              id: topicDoc.id,
-              orderIndex: Number(topicDoc.data().orderIndex || 0),
-            }))
-            .sort((a, b) => a.orderIndex - b.orderIndex)
+          const sortedTopics: StoredTopicDoc[] = topicsSnap.docs
+            .map((topicDoc) => ({ id: topicDoc.id, ...(topicDoc.data() as Omit<StoredTopicDoc, "id">) }))
+            .sort((a, b) => Number(a.orderIndex || 0) - Number(b.orderIndex || 0))
+
+          const topicRefs = sortedTopics.map((topic) => ({
+            id: topic.id,
+            orderIndex: Number(topic.orderIndex || 0),
+          }))
 
           nextPathState = {
             pathId: matchingPathDoc.id,
@@ -84,6 +228,16 @@ export default function SubjectModulesPage() {
             totalTopics: topicRefs.length,
             topicRefs,
           }
+
+          setModuleCards(
+            sortedTopics.map((topic) => ({
+              id: topic.id,
+              title: String(topic.title || "Untitled Module"),
+              theory: String(topic.contentMarkdown || topic.description || "Content is being prepared."),
+              keyPoints: Array.isArray(topic.resources) ? topic.resources.slice(0, 3).map((resource: { title?: string }) => resource.title || "Resource") : [],
+              estimatedMinutes: Number(topic.estimatedMinutes || 20),
+            }))
+          )
         }
 
         if (mounted) {
@@ -106,7 +260,6 @@ export default function SubjectModulesPage() {
     }
   }, [decodedSubject, user])
 
-  const modules = useMemo<SubjectModuleOutline[]>(() => buildSubjectModules(subjectName), [subjectName])
   const canAccessSubject = selectedSubjects.some((subject) => subject.toLowerCase() === subjectName.toLowerCase())
 
   if (isLoading) {
@@ -130,7 +283,7 @@ export default function SubjectModulesPage() {
   }
 
   const unlockedCount = pathState
-    ? Math.max(1, Math.min(modules.length, pathState.completedTopics + 1))
+    ? Math.max(1, Math.min(moduleCards.length, pathState.completedTopics + 1))
     : 1
 
   return (
@@ -154,7 +307,7 @@ export default function SubjectModulesPage() {
         <CardContent>
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-muted-foreground">
-              {pathState ? `${pathState.completedTopics}/${modules.length} modules completed` : "No module attempts yet"}
+              {pathState ? `${pathState.completedTopics}/${moduleCards.length} modules completed` : "No module attempts yet"}
             </span>
             <span className="text-sm font-medium text-primary">{pathState?.overallProgress || 0}%</span>
           </div>
@@ -163,13 +316,13 @@ export default function SubjectModulesPage() {
       </Card>
 
       <div className="space-y-4">
-        {modules.map((module, index) => {
+        {moduleCards.map((module, index) => {
           const isUnlocked = index < unlockedCount
           const isCompleted = Boolean(pathState && index < pathState.completedTopics)
-          const isLast = index === modules.length - 1
+          const isLast = index === moduleCards.length - 1
           const linkedTopicId = pathState?.topicRefs?.[index]?.id
           const learnHref = linkedTopicId
-            ? `/learn/paths/${pathState?.pathId}/topic/${linkedTopicId}`
+            ? `/learn/paths/${pathState?.pathId}/topic/${linkedTopicId}${isLast ? "?mode=quiz" : ""}`
             : "/learn/paths"
 
           return (

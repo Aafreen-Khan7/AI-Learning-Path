@@ -283,83 +283,63 @@ export default function LearnDashboard() {
         </CardContent>
       </Card>
 
-      <Card className="bg-card border-border">
-        <CardContent className="pt-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <p className="text-sm font-medium text-foreground">Join a class</p>
-              <p className="text-xs text-muted-foreground mb-2">Enter teacher invite code to connect your dashboard</p>
-              <Input
-                value={inviteCode}
-                onChange={(event) => setInviteCode(event.target.value)}
-                placeholder="e.g. CSE-2026-A"
-                className="bg-secondary border-border"
-              />
-            </div>
-            <Button onClick={handleJoinClass} disabled={joiningClass}>
-              <Users className="h-4 w-4 mr-2" />
-              {joiningClass ? "Joining..." : "Join Class"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="bg-card border-border">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-1 bg-card border-border border-primary/20 shadow-sm">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <BookOpen className="h-6 w-6 text-primary" />
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <Users className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Join a class</p>
+                  <p className="text-xs text-muted-foreground">Connect with your teacher</p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Active Subjects</p>
-                <p className="text-2xl font-bold text-foreground">{activeSubjects}</p>
+              <div className="flex gap-2">
+                <Input
+                  value={inviteCode}
+                  onChange={(event) => setInviteCode(event.target.value)}
+                  placeholder="Invite code..."
+                  className="bg-secondary border-border h-10"
+                />
+                <Button onClick={handleJoinClass} disabled={joiningClass} className="h-10">
+                  {joiningClass ? "Joining..." : "Join"}
+                </Button>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-card border-border">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-chart-2/10 flex items-center justify-center">
-                <Target className="h-6 w-6 text-chart-2" />
+        <div className="lg:col-span-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
+          <Card className="bg-card border-border">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <BookOpen className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Active Subjects</p>
+                  <p className="text-2xl font-bold text-foreground">{activeSubjects}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Topics Completed</p>
-                <p className="text-2xl font-bold text-foreground">{topicsCompleted}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card className="bg-card border-border">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-chart-3/10 flex items-center justify-center">
-                <Clock className="h-6 w-6 text-chart-3" />
+          <Card className="bg-card border-border">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-xl bg-chart-2/10 flex items-center justify-center">
+                  <Target className="h-6 w-6 text-chart-2" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Topics Completed</p>
+                  <p className="text-2xl font-bold text-foreground">{topicsCompleted}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Hours Planned</p>
-                <p className="text-2xl font-bold text-foreground">{hoursStudied}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-border">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-chart-4/10 flex items-center justify-center">
-                <TrendingUp className="h-6 w-6 text-chart-4" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Avg. Quiz Score</p>
-                <p className="text-2xl font-bold text-foreground">{avgQuizScore}%</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

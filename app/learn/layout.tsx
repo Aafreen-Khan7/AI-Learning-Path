@@ -27,6 +27,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  Clock,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -35,6 +36,7 @@ const navigation = [
   { name: "Learning Paths", href: "/learn/paths", icon: BookOpen },
   { name: "Study Planner", href: "/learn/planner", icon: Calendar },
   { name: "Concept Simplifier", href: "/learn/simplifier", icon: MessageSquare },
+  { name: "Focus Timer", href: "/learn/timer", icon: Clock },
 ]
 
 export default function LearnLayout({ children }: { children: React.ReactNode }) {

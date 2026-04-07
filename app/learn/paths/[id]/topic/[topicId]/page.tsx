@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -63,6 +63,7 @@ const fallbackQuiz: QuizQuestion[] = [
 export default function TopicDetailPage() {
   const { user } = useAuth()
   const params = useParams<{ id: string; topicId: string }>()
+  const searchParams = useSearchParams()
   const pathId = params.id
   const topicId = params.topicId
 
@@ -82,6 +83,7 @@ export default function TopicDetailPage() {
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>(fallbackQuiz)
 
   const [orderedTopicIds, setOrderedTopicIds] = useState<string[]>([])
+  const shouldOpenQuiz = searchParams.get("mode") === "quiz"
 
   useEffect(() => {
     let mounted = true
@@ -148,6 +150,9 @@ export default function TopicDetailPage() {
           setAnswers(new Array(questions.length).fill(null))
           setOrderedTopicIds(sortedTopics.map((topic) => topic.id))
           setIsLocked(topicLocked)
+          if (shouldOpenQuiz) {
+            setMode("quiz")
+          }
         }
       } catch (error) {
         console.error("Failed to load topic", error)
@@ -162,7 +167,7 @@ export default function TopicDetailPage() {
     return () => {
       mounted = false
     }
-  }, [pathId, topicId, user])
+  }, [pathId, topicId, user, shouldOpenQuiz])
 
   const score = useMemo(() => {
     if (!quizQuestions.length) return 0
