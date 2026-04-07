@@ -27,13 +27,29 @@ import {
 } from "@/components/ui/select"
 import { useAuth } from "@/context/AuthContext"
 import { db } from "@/lib/firebase"
-import { addDoc, collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore"
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore"
 import { buildSubjectModules, LearningPathRecord, statusFromProgress } from "@/lib/learning-data"
 import { toast } from "sonner"
 
 const colorClasses = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5", "bg-primary"]
 
-type PathListItem = LearningPathRecord & { hasPath: boolean }
+type PathListItem = LearningPathRecord & { hasPath: boolean; personalizationVersion: number }
+
+type GeneratedModule = {
+  title: string
+  theory: string
+  keyPoints: string[]
+  estimatedMinutes: number
+  quizQuestions: Array<{ question: string; options: string[]; correctIndex: number; explanation?: string }>
+}
+
+type PathGenerationResponse = {
+  profile: "foundation" | "balanced" | "accelerated"
+  moduleCount: number
+  modules: GeneratedModule[]
+  usedFallback?: boolean
+  fallbackWarning?: string
+}
 
 function slugify(input: string): string {
   return input.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
@@ -106,6 +122,7 @@ export default function LearningPathsPage() {
               duration: String(data.duration || `${Math.max(1, totalTopics)} hours`),
               status: statusFromProgress(Number.isFinite(computedProgress) ? computedProgress : 0),
               hasPath: true,
+              personalizationVersion: Number(data.personalizationVersion || 0),
             }
           })
         )
@@ -127,6 +144,7 @@ export default function LearningPathsPage() {
             duration: `${Math.max(1, Math.round(modulePlan.reduce((sum, module) => sum + module.estimatedMinutes, 0) / 60))} hours`,
             status: "not-started",
             hasPath: false,
+            personalizationVersion: 0,
           })
         }
 
@@ -152,32 +170,121 @@ export default function LearningPathsPage() {
       return
     }
 
-    if (subject.hasPath) {
+    if (subject.hasPath && subject.personalizationVersion > 0) {
       router.push(`/learn/paths/${subject.id}`)
       return
     }
 
     setCreatingPathFor(subject.subjectName)
     try {
-      const modules = buildSubjectModules(subject.subjectName)
+      const userSnap = await getDoc(doc(db, "users", user.uid))
+      const branch = userSnap.exists() ? String(userSnap.data().branch || "") : ""
+      const qualification = userSnap.exists() ? String(userSnap.data().qualification || "") : ""
+      const year = userSnap.exists() ? String(userSnap.data().year || "") : ""
+      const semester = userSnap.exists() ? String(userSnap.data().semester || "") : ""
+
+      const attemptsQuery = query(collection(db, "topicAttempts"), where("uid", "==", user.uid))
+      const attemptsSnap = await getDocs(attemptsQuery)
+      const topicScores = attemptsSnap.docs
+        .map((attemptDoc) => Number(attemptDoc.data().percentage || 0))
+        .filter((score) => Number.isFinite(score))
+
+      const progressQuery = doc(db, "subjectProgress", `${user.uid}_${subject.subjectId}`)
+      const progressSnap = await getDoc(progressQuery)
+      const weakTopics = progressSnap.exists() && Array.isArray(progressSnap.data().weakTopics)
+        ? progressSnap.data().weakTopics.map((topic: unknown) => String(topic))
+        : []
+
+      const averageScore = topicScores.length ? Math.round(topicScores.reduce((sum, score) => sum + score, 0) / topicScores.length) : 0
+      const progress = subject.overallProgress || 0
+
+      const generationResponse = await fetch("/api/path-generation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subjectName: subject.subjectName,
+          averageScore,
+          progress,
+          weakTopics,
+          topicScores,
+          qualification,
+          branch,
+          year,
+          semester,
+        }),
+      })
+
+      if (!generationResponse.ok) {
+        let errorMessage = "Failed to generate path"
+        let errorDetails = ""
+        
+        try {
+          const errorData = await generationResponse.json()
+          errorMessage = errorData.error || errorMessage
+          errorDetails = errorData.details || errorData.hint || ""
+        } catch {
+          // If response is not JSON, use status text
+          errorMessage = `${generationResponse.status}: ${generationResponse.statusText}`
+        }
+        
+        const fullError = errorDetails ? `${errorMessage} - ${errorDetails}` : errorMessage
+        throw new Error(fullError)
+      }
+
+      const generated = (await generationResponse.json()) as PathGenerationResponse
+      const modules = generated.modules
+
+      if (generated.usedFallback && generated.fallbackWarning) {
+        toast.warning(generated.fallbackWarning, {
+          duration: 5000,
+          description: "The learning path uses placeholder modules. Personalization will update when the API is available."
+        })
+      }
+
       const now = new Date().toISOString()
 
-      const createdPathRef = await addDoc(collection(db, "learningPaths"), {
-        uid: user.uid,
-        subjectId: slugify(subject.subjectName),
-        subjectName: subject.subjectName,
-        description: subject.description,
-        duration: subject.duration,
-        completedTopics: 0,
-        totalTopics: modules.length,
-        overallProgress: 0,
-        createdAt: now,
-        updatedAt: now,
-      })
+      const pathRef = subject.hasPath
+        ? doc(db, "learningPaths", subject.id)
+        : await addDoc(collection(db, "learningPaths"), {
+            uid: user.uid,
+            subjectId: subject.subjectId,
+            subjectName: subject.subjectName,
+            description: subject.description,
+            duration: subject.duration,
+            completedTopics: 0,
+            totalTopics: modules.length,
+            overallProgress: 0,
+            createdAt: now,
+            updatedAt: now,
+          })
+
+      if (subject.hasPath) {
+        const existingTopics = await getDocs(collection(db, "learningPaths", subject.id, "topics"))
+        await Promise.all(existingTopics.docs.map((topicDoc) => deleteDoc(topicDoc.ref)))
+      }
+
+      await setDoc(
+        pathRef,
+        {
+          uid: user.uid,
+          subjectId: subject.subjectId,
+          subjectName: subject.subjectName,
+          description: subject.description,
+          duration: subject.duration,
+          completedTopics: 0,
+          totalTopics: modules.length,
+          overallProgress: 0,
+          personalizationVersion: 1,
+          graspingProfile: generated.profile,
+          generatedBy: "ai-ml",
+          updatedAt: now,
+        },
+        { merge: true }
+      )
 
       await Promise.all(
         modules.map((module, index) =>
-          setDoc(doc(db, "learningPaths", createdPathRef.id, "topics", `module-${index + 1}`), {
+          setDoc(doc(db, "learningPaths", pathRef.id, "topics", `module-${index + 1}`), {
             title: module.title,
             description: module.theory,
             contentMarkdown: `${module.theory}\n\nKey points:\n${module.keyPoints.map((point) => `- ${point}`).join("\n")}`,
@@ -185,39 +292,19 @@ export default function LearningPathsPage() {
             orderIndex: index + 1,
             resources: [],
             completed: false,
-            quizQuestions: [
-              {
-                question: `What is the main focus of ${module.title}?`,
-                options: [
-                  module.keyPoints[0] || "Core concept",
-                  "Random unrelated topic",
-                  "Only memorization without understanding",
-                  "Skipping to advanced topics first",
-                ],
-                correctIndex: 0,
-                explanation: `The module focuses on ${module.keyPoints[0] || "the core concept"}.`,
-              },
-              {
-                question: `Which key point belongs to ${module.title}?`,
-                options: [
-                  module.keyPoints[1] || module.keyPoints[0] || "Core point",
-                  "Ignoring fundamentals",
-                  "No practical connection",
-                  "Avoiding revision",
-                ],
-                correctIndex: 0,
-                explanation: `This module includes ${module.keyPoints[1] || module.keyPoints[0] || "its core point"}.`,
-              },
-            ],
+            quizQuestions: module.quizQuestions,
           })
         )
       )
 
-      toast.success("Learning path created")
-      router.push(`/learn/paths/${createdPathRef.id}`)
+      toast.success(subject.hasPath ? "Learning path personalized" : "Learning path created")
+      router.push(`/learn/paths/${pathRef.id}`)
     } catch (error) {
       console.error("Failed to create learning path", error)
-      toast.error("Could not create learning path")
+      const errorMessage = error instanceof Error ? error.message : "Could not create learning path"
+      toast.error(errorMessage, {
+        description: errorMessage.includes("API") ? "Check your Gemini API configuration" : undefined,
+      })
     } finally {
       setCreatingPathFor(null)
     }
@@ -342,11 +429,13 @@ export default function LearningPathsPage() {
                   {creatingPathFor === subject.subjectName
                     ? "Creating..."
                     : subject.hasPath
-                    ? subject.status === "completed"
-                      ? "Review"
-                      : subject.status === "in-progress"
-                      ? "Continue"
-                      : "Start Learning"
+                    ? subject.personalizationVersion > 0
+                      ? subject.status === "completed"
+                        ? "Review"
+                        : subject.status === "in-progress"
+                        ? "Continue"
+                        : "Start Learning"
+                      : "Personalize"
                     : "Create Path"}
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>

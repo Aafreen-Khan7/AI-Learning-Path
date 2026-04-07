@@ -5,6 +5,10 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
   LayoutDashboard,
+  BookOpen,
+  Calendar,
+  MessageSquare,
+  Clock,
   FileText,
   Upload,
   Trophy,
@@ -19,6 +23,10 @@ import { Button } from "@/components/ui/button"
 
 const navItems = [
   { href: "/student", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/learn", label: "Learning Path", icon: BookOpen },
+  { href: "/learn/planner", label: "Study Planner", icon: Calendar },
+  { href: "/learn/simplifier", label: "Concept Simplifier", icon: MessageSquare },
+  { href: "/learn/timer", label: "Focus Timer", icon: Clock },
   { href: "/student/assignments", label: "Assignments", icon: FileText },
   { href: "/student/submissions", label: "My Submissions", icon: Upload },
   { href: "/student/grades", label: "Grades", icon: Trophy },
